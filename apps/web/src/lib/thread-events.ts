@@ -87,10 +87,10 @@ export function activeThreadRuns(
 /** Reason the newest run stopped, until the reader dismisses that run's failure. */
 export function threadRunError(
   snapshot: ThreadSnapshot | null,
-  dismissedRunId?: string | null,
+  dismissedRunIds?: ReadonlySet<string>,
 ): string | null {
   const run = snapshot?.run;
-  if (run?.status !== "failed" || run.id === dismissedRunId) return null;
+  if (run?.status !== "failed" || dismissedRunIds?.has(run.id)) return null;
   return run.error ?? null;
 }
 
@@ -304,7 +304,11 @@ export function reduceThreadSnapshot(
     const activeRuns = prev.activeRuns?.filter((candidate) => candidate.id !== event.runId);
     const nextMemberRun = activeRuns?.find((candidate) => candidate.botId === event.botId);
     const failure = runFailureError(event);
-    const endedRun = prev.run && prev.run.id === event.runId ? prev.run : null;
+    const primaryEnded = prev.run?.id === event.runId ? prev.run : null;
+    // In a group the failing run may be a member run rather than the displayed one, so look
+    // it up in activeRuns as well or its error would be dropped with it.
+    const endedRun =
+      primaryEnded ?? prev.activeRuns?.find((candidate) => candidate.id === event.runId) ?? null;
     return {
       ...prev,
       cursor: event.seq,
@@ -315,7 +319,7 @@ export function reduceThreadSnapshot(
       run:
         endedRun && failure
           ? { ...endedRun, status: "failed", error: failure }
-          : endedRun
+          : primaryEnded
             ? (activeRuns?.[0] ?? null)
             : prev.run,
       activeRuns,

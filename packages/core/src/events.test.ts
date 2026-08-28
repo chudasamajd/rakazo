@@ -34,6 +34,15 @@ describe("runFailureError", () => {
     expect(runFailureError({ type: "run.completed", payload: { error: "nope" } })).toBeNull();
     expect(runFailureError({ type: "run.cancelled", payload: { error: "nope" } })).toBeNull();
   });
+
+  it("trims surrounding space and clamps a runaway message", () => {
+    expect(runFailureError({ type: "run.failed", payload: { error: "  spaced  " } })).toBe(
+      "spaced",
+    );
+    const long = runFailureError({ type: "run.failed", payload: { error: "x".repeat(400) } });
+    expect(long).toHaveLength(301);
+    expect(long?.endsWith("…")).toBe(true);
+  });
 });
 
 describe("projectMessages", () => {

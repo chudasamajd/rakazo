@@ -560,7 +560,35 @@ describe("thread event reduction", () => {
       error: "Provider is not configured: openrouter",
     });
     expect(threadRunError(next)).toBe("Provider is not configured: openrouter");
-    expect(threadRunError(next, failing.id)).toBeNull();
+    expect(threadRunError(next, new Set([failing.id]))).toBeNull();
+    expect(threadRunError(next, new Set(["other-run"]))).toBe(
+      "Provider is not configured: openrouter",
+    );
+  });
+
+  it("keeps the error when a member run fails while another member is still running", () => {
+    const runA = threadRun("run-a", "bot-a");
+    const runB = threadRun("run-b", "bot-b");
+    const initial: ThreadSnapshot = {
+      ...snapshot([]),
+      run: runA,
+      activeRuns: [runA, runB],
+    };
+
+    const next = reduceThreadSnapshot(
+      initial,
+      event({
+        type: "run.failed",
+        seq: 13,
+        botId: "bot-b",
+        runId: runB.id,
+        payload: { error: "member exploded" },
+      }),
+    );
+
+    expect(next?.activeRuns).toEqual([runA]);
+    expect(next?.run).toMatchObject({ id: runB.id, status: "failed", error: "member exploded" });
+    expect(threadRunError(next)).toBe("member exploded");
   });
 
   it("clears the run and reports no error when it completes or fails without a message", () => {

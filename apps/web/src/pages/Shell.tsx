@@ -345,7 +345,9 @@ export function ShellPage() {
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
   const [dictating, setDictating] = useState(false);
   const [dictationError, setDictationError] = useState<string | null>(null);
-  const [dismissedRunErrorId, setDismissedRunErrorId] = useState<string | null>(null);
+  const [dismissedRunErrorIds, setDismissedRunErrorIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [menuOpen, setMenuOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
@@ -1224,7 +1226,7 @@ export function ShellPage() {
   );
   const transcriptRunning = workingRuns.length > 0;
   const composerRunning = currentRuns.some((run) => isActive(run.status));
-  const runError = threadRunError(activeSnapshot, dismissedRunErrorId);
+  const runError = threadRunError(activeSnapshot, dismissedRunErrorIds);
   const transcriptArtifactTarget = useMemo<ArtifactTarget>(
     () => (inGroup ? { groupId: groupId ?? "" } : { botId: active?.id ?? "" }),
     [active?.id, groupId, inGroup],
@@ -1844,9 +1846,12 @@ export function ShellPage() {
   }
 
   function dismissComposerError() {
+    // The strip shows one message at a time, so only dismiss the run failure when it is the
+    // one on screen; otherwise a live run would be silenced before it has even failed.
+    const failedRunId = !sendError && !dictationError && runError ? activeSnapshot?.run?.id : null;
     setSendError(null);
     setDictationError(null);
-    setDismissedRunErrorId(activeSnapshot?.run?.id ?? null);
+    if (failedRunId) setDismissedRunErrorIds((current) => new Set(current).add(failedRunId));
   }
 
   const embeddedScreenUrl = embeddableScreenUrl(screenUrl);

@@ -387,7 +387,10 @@ export function applyMobileThreadEvent(
   if (isRunTerminalEvent(event)) {
     const activeRuns = prev.activeRuns?.filter((candidate) => candidate.id !== event.runId);
     const failure = runFailureError(event);
-    const endedRun = prev.run && prev.run.id === event.runId ? prev.run : null;
+    const primaryEnded = prev.run?.id === event.runId ? prev.run : null;
+    // A group member run can fail while another is displayed; see reduceThreadSnapshot.
+    const endedRun =
+      primaryEnded ?? prev.activeRuns?.find((candidate) => candidate.id === event.runId) ?? null;
     return {
       ...prev,
       cursor: event.seq ?? prev.cursor,
@@ -396,7 +399,7 @@ export function applyMobileThreadEvent(
       run:
         endedRun && failure
           ? { ...endedRun, status: "failed", error: failure }
-          : endedRun
+          : primaryEnded
             ? (activeRuns?.[0] ?? null)
             : prev.run,
       activeRuns,

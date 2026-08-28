@@ -318,7 +318,7 @@ export async function threadSnapshot(
 
   const core = await deps.prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM threads WHERE id = ${target.threadId} FOR SHARE`;
-    const [messagePage, last, activeRuns] = await Promise.all([
+    const [messagePage, last, activeRuns, failedRun] = await Promise.all([
       loadMessagePage(tx, target.threadId, undefined, THREAD_MESSAGE_PAGE_SIZE),
       tx.event.findFirst({
         where: { threadId: target.threadId },
@@ -330,6 +330,12 @@ export async function threadSnapshot(
           threadId: target.threadId,
           status: { in: [...ACTIVE_RUN_STATUSES] },
         },
+        orderBy: { createdAt: "desc" },
+      }),
+      // Matches the bot branch: a group whose last run failed still reports it, so a refresh
+      // does not wipe the error the client is showing.
+      tx.run.findFirst({
+        where: { threadId: target.threadId, status: "failed" },
         orderBy: { createdAt: "desc" },
       }),
     ]);
@@ -344,7 +350,7 @@ export async function threadSnapshot(
             orderBy: { seq: "asc" },
           })
         : [];
-    return { messagePage, last, activeRuns, liveEvents };
+    return { messagePage, last, activeRuns, failedRun, liveEvents };
   });
   return {
     groupId: target.groupId,
@@ -354,7 +360,11 @@ export async function threadSnapshot(
     cursor: core.last?.seq ?? -1,
     messages: messagesWithLiveEvents(core.messagePage.messages, core.liveEvents),
     olderCursor: core.messagePage.olderCursor,
-    run: core.activeRuns[0] ? mapRun(core.activeRuns[0]) : null,
+    run: core.activeRuns[0]
+      ? mapRun(core.activeRuns[0])
+      : core.failedRun
+        ? mapRun(core.failedRun)
+        : null,
     activeRuns: core.activeRuns.map(mapRun),
   };
 }
