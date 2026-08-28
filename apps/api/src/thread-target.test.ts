@@ -185,40 +185,17 @@ describe("threadSnapshot", () => {
       completedAt: new Date("2026-08-23T00:00:01.000Z"),
       createdAt: new Date("2026-08-23T00:00:00.000Z"),
     };
-    const findFirstRun = vi.fn().mockResolvedValue(run);
-    const tx = {
-      $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
-      message: { findMany: vi.fn().mockResolvedValue([]) },
-      event: {
-        findFirst: vi.fn().mockResolvedValue(null),
-        findMany: vi.fn(),
-      },
-      run: { findMany: vi.fn().mockResolvedValue([]), findFirst: findFirstRun },
-    };
-    const prisma = {
-      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
-    } as unknown as PrismaClient;
-    const target = {
-      kind: "group",
-      groupId: "group-1",
-      groupName: "Group",
-      members: [],
-      threadId: "thread-1",
-    } as unknown as ThreadTarget;
+    const findManyRuns = groupRunFindMany({ terminals: [run] });
+    const snapshot = await threadSnapshot({ prisma: groupPrisma(findManyRuns) }, groupTarget());
 
-    const snapshot = await threadSnapshot({ prisma }, target);
-
-    expect(findFirstRun).toHaveBeenCalledWith(
+    expect(findManyRuns).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           threadId: "thread-1",
           status: { in: ["failed", "completed", "cancelled"] },
         },
-        orderBy: [
-          { completedAt: { sort: "desc", nulls: "last" } },
-          { createdAt: "desc" },
-          { id: "desc" },
-        ],
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: 50,
       }),
     );
     expect(snapshot.run).toEqual(
@@ -228,6 +205,20 @@ describe("threadSnapshot", () => {
   });
 
   it("does not revive an older group failure after a newer run completed", async () => {
+    const failed = {
+      id: "run-old-failed",
+      botId: "bot-2",
+      threadId: "thread-1",
+      taskId: "task-1",
+      status: "failed",
+      trigger: "user",
+      modelProvider: null,
+      modelId: null,
+      error: "old failure",
+      startedAt: null,
+      completedAt: new Date("2026-08-23T00:00:01.000Z"),
+      createdAt: new Date("2026-08-23T00:00:00.000Z"),
+    };
     const completed = {
       id: "run-newer-completed",
       botId: "bot-1",
@@ -242,47 +233,67 @@ describe("threadSnapshot", () => {
       completedAt: new Date("2026-08-23T00:00:04.000Z"),
       createdAt: new Date("2026-08-23T00:00:02.000Z"),
     };
-    const findFirstRun = vi.fn().mockResolvedValue(completed);
-    const tx = {
-      $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
-      message: { findMany: vi.fn().mockResolvedValue([]) },
-      event: {
-        findFirst: vi.fn().mockResolvedValue(null),
-        findMany: vi.fn(),
-      },
-      run: { findMany: vi.fn().mockResolvedValue([]), findFirst: findFirstRun },
-    };
-    const prisma = {
-      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
-    } as unknown as PrismaClient;
-    const target = {
-      kind: "group",
-      groupId: "group-1",
-      groupName: "Group",
-      members: [],
-      threadId: "thread-1",
-    } as unknown as ThreadTarget;
-
-    const snapshot = await threadSnapshot({ prisma }, target);
-
-    expect(findFirstRun).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          threadId: "thread-1",
-          status: { in: ["failed", "completed", "cancelled"] },
-        },
-        orderBy: [
-          { completedAt: { sort: "desc", nulls: "last" } },
-          { createdAt: "desc" },
-          { id: "desc" },
-        ],
-      }),
+    const snapshot = await threadSnapshot(
+      { prisma: groupPrisma(groupRunFindMany({ terminals: [completed, failed] })) },
+      groupTarget(),
     );
+
     expect(snapshot.run).toBeNull();
     expect(snapshot.activeRuns).toEqual([]);
   });
 
-  it("orders null completedAt behind timestamped terminal runs", async () => {
+  it("does not revive a failure when a newer cancelled run has null completedAt", async () => {
+    const failed = {
+      id: "run-old-failed",
+      botId: "bot-2",
+      threadId: "thread-1",
+      taskId: "task-1",
+      status: "failed",
+      trigger: "user",
+      modelProvider: null,
+      modelId: null,
+      error: "old failure",
+      startedAt: null,
+      completedAt: new Date("2026-08-23T00:00:01.000Z"),
+      createdAt: new Date("2026-08-23T00:00:00.000Z"),
+    };
+    const cancelled = {
+      id: "run-newer-cancelled",
+      botId: "bot-1",
+      threadId: "thread-1",
+      taskId: "task-2",
+      status: "cancelled",
+      trigger: "user",
+      modelProvider: null,
+      modelId: null,
+      error: null,
+      startedAt: new Date("2026-08-23T00:00:02.000Z"),
+      completedAt: null,
+      createdAt: new Date("2026-08-23T00:00:03.000Z"),
+    };
+    const snapshot = await threadSnapshot(
+      { prisma: groupPrisma(groupRunFindMany({ terminals: [cancelled, failed] })) },
+      groupTarget(),
+    );
+
+    expect(snapshot.run).toBeNull();
+  });
+
+  it("prefers a timestamped terminal over an older failure with null completedAt", async () => {
+    const failed = {
+      id: "run-old-failed",
+      botId: "bot-2",
+      threadId: "thread-1",
+      taskId: "task-1",
+      status: "failed",
+      trigger: "user",
+      modelProvider: null,
+      modelId: null,
+      error: "old failure",
+      startedAt: null,
+      completedAt: null,
+      createdAt: new Date("2026-08-23T00:00:00.000Z"),
+    };
     const completed = {
       id: "run-completed",
       botId: "bot-1",
@@ -297,38 +308,11 @@ describe("threadSnapshot", () => {
       completedAt: new Date("2026-08-23T00:00:04.000Z"),
       createdAt: new Date("2026-08-23T00:00:02.000Z"),
     };
-    const findFirstRun = vi.fn().mockResolvedValue(completed);
-    const tx = {
-      $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
-      message: { findMany: vi.fn().mockResolvedValue([]) },
-      event: {
-        findFirst: vi.fn().mockResolvedValue(null),
-        findMany: vi.fn(),
-      },
-      run: { findMany: vi.fn().mockResolvedValue([]), findFirst: findFirstRun },
-    };
-    const prisma = {
-      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
-    } as unknown as PrismaClient;
-    const target = {
-      kind: "group",
-      groupId: "group-1",
-      groupName: "Group",
-      members: [],
-      threadId: "thread-1",
-    } as unknown as ThreadTarget;
-
-    const snapshot = await threadSnapshot({ prisma }, target);
-
-    expect(findFirstRun).toHaveBeenCalledWith(
-      expect.objectContaining({
-        orderBy: [
-          { completedAt: { sort: "desc", nulls: "last" } },
-          { createdAt: "desc" },
-          { id: "desc" },
-        ],
-      }),
+    const snapshot = await threadSnapshot(
+      { prisma: groupPrisma(groupRunFindMany({ terminals: [failed, completed] })) },
+      groupTarget(),
     );
+
     expect(snapshot.run).toBeNull();
   });
 
@@ -348,28 +332,10 @@ describe("threadSnapshot", () => {
       completedAt: new Date("2026-08-23T00:00:01.000Z"),
       createdAt: new Date("2026-08-23T00:00:00.000Z"),
     };
-    const findFirstRun = vi.fn().mockResolvedValue(run);
-    const tx = {
-      $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
-      message: { findMany: vi.fn().mockResolvedValue([]) },
-      event: {
-        findFirst: vi.fn().mockResolvedValue(null),
-        findMany: vi.fn(),
-      },
-      run: { findMany: vi.fn().mockResolvedValue([]), findFirst: findFirstRun },
-    };
-    const prisma = {
-      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
-    } as unknown as PrismaClient;
-    const target = {
-      kind: "group",
-      groupId: "group-1",
-      groupName: "Group",
-      members: [],
-      threadId: "thread-1",
-    } as unknown as ThreadTarget;
-
-    const snapshot = await threadSnapshot({ prisma }, target);
+    const snapshot = await threadSnapshot(
+      { prisma: groupPrisma(groupRunFindMany({ terminals: [run] })) },
+      groupTarget(),
+    );
 
     expect(snapshot.run).toEqual(
       expect.objectContaining({
@@ -409,28 +375,10 @@ describe("threadSnapshot", () => {
       completedAt: new Date("2026-08-23T00:00:02.000Z"),
       createdAt: new Date("2026-08-23T00:00:01.000Z"),
     };
-    const findFirstRun = vi.fn().mockResolvedValue(failed);
-    const tx = {
-      $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
-      message: { findMany: vi.fn().mockResolvedValue([]) },
-      event: {
-        findFirst: vi.fn().mockResolvedValue(null),
-        findMany: vi.fn().mockResolvedValue([]),
-      },
-      run: { findMany: vi.fn().mockResolvedValue([active]), findFirst: findFirstRun },
-    };
-    const prisma = {
-      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
-    } as unknown as PrismaClient;
-    const target = {
-      kind: "group",
-      groupId: "group-1",
-      groupName: "Group",
-      members: [],
-      threadId: "thread-1",
-    } as unknown as ThreadTarget;
-
-    const snapshot = await threadSnapshot({ prisma }, target);
+    const snapshot = await threadSnapshot(
+      { prisma: groupPrisma(groupRunFindMany({ active: [active], terminals: [failed] })) },
+      groupTarget(),
+    );
 
     expect(snapshot.run).toEqual(
       expect.objectContaining({ id: "run-failed", status: "failed", error: "member exploded" }),
@@ -469,28 +417,12 @@ describe("threadSnapshot", () => {
       completedAt: new Date("2026-08-23T00:00:02.000Z"),
       createdAt: new Date("2026-08-23T00:00:01.000Z"),
     };
-    const findFirstRun = vi.fn().mockResolvedValue(failed);
-    const tx = {
-      $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
-      message: { findMany: vi.fn().mockResolvedValue([]) },
-      event: {
-        findFirst: vi.fn().mockResolvedValue(null),
-        findMany: vi.fn().mockResolvedValue([]),
+    const snapshot = await threadSnapshot(
+      {
+        prisma: groupPrisma(groupRunFindMany({ active: [lateActive], terminals: [failed] })),
       },
-      run: { findMany: vi.fn().mockResolvedValue([lateActive]), findFirst: findFirstRun },
-    };
-    const prisma = {
-      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
-    } as unknown as PrismaClient;
-    const target = {
-      kind: "group",
-      groupId: "group-1",
-      groupName: "Group",
-      members: [],
-      threadId: "thread-1",
-    } as unknown as ThreadTarget;
-
-    const snapshot = await threadSnapshot({ prisma }, target);
+      groupTarget(),
+    );
 
     expect(snapshot.run).toEqual(
       expect.objectContaining({ id: "run-failed", status: "failed", error: "member exploded" }),
@@ -500,6 +432,43 @@ describe("threadSnapshot", () => {
     ]);
   });
 });
+
+function isTerminalRunQuery(where: { status?: { in?: string[] } } | undefined) {
+  const statuses = where?.status?.in;
+  return Array.isArray(statuses) && statuses.includes("failed") && statuses.includes("completed");
+}
+
+function groupRunFindMany(input: { active?: unknown[]; terminals?: unknown[] }) {
+  return vi.fn().mockImplementation(async (args: { where?: { status?: { in?: string[] } } }) => {
+    if (isTerminalRunQuery(args.where)) return input.terminals ?? [];
+    return input.active ?? [];
+  });
+}
+
+function groupPrisma(findManyRuns: ReturnType<typeof groupRunFindMany>) {
+  const tx = {
+    $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
+    message: { findMany: vi.fn().mockResolvedValue([]) },
+    event: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    run: { findMany: findManyRuns },
+  };
+  return {
+    $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+  } as unknown as PrismaClient;
+}
+
+function groupTarget() {
+  return {
+    kind: "group",
+    groupId: "group-1",
+    groupName: "Group",
+    members: [],
+    threadId: "thread-1",
+  } as unknown as ThreadTarget;
+}
 
 describe("stopThreadRuns", () => {
   it("releases every active group member screen immediately", async () => {
