@@ -333,14 +333,14 @@ export async function threadSnapshot(
         },
         orderBy: { createdAt: "desc" },
       }),
-      // Recent terminals; pickLatestTerminalRun coalesces null completedAt to createdAt so
-      // neither nulls-first nor nulls-last can revive a stale failure.
+      // Recently updated terminals (completion bumps updatedAt). pickLatestTerminalRun then
+      // ranks by completedAt ?? createdAt so null timestamps cannot revive a stale failure.
       tx.run.findMany({
         where: {
           threadId: target.threadId,
           status: { in: ["failed", "completed", "cancelled"] },
         },
-        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
         take: 50,
       }),
     ]);

@@ -194,7 +194,7 @@ describe("threadSnapshot", () => {
           threadId: "thread-1",
           status: { in: ["failed", "completed", "cancelled"] },
         },
-        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
         take: 50,
       }),
     );
