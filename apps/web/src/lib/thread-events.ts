@@ -14,6 +14,7 @@ import {
   prependThreadHistoryPage,
   progressMessageId,
   reduceLiveMessageBlocks,
+  runFailureError,
   subagentBlockFromPayload,
 } from "@rakazo/core";
 
@@ -81,6 +82,16 @@ export function activeThreadRuns(
   snapshot: ThreadSnapshot | null,
 ): NonNullable<ThreadSnapshot["activeRuns"]> {
   return snapshot?.activeRuns ?? (snapshot?.run ? [snapshot.run] : []);
+}
+
+/** Reason the newest run stopped, until the reader dismisses that run's failure. */
+export function threadRunError(
+  snapshot: ThreadSnapshot | null,
+  dismissedRunId?: string | null,
+): string | null {
+  const run = snapshot?.run;
+  if (run?.status !== "failed" || run.id === dismissedRunId) return null;
+  return run.error ?? null;
 }
 
 export function clearActiveThreadRuns(snapshot: ThreadSnapshot): ThreadSnapshot {
@@ -292,12 +303,21 @@ export function reduceThreadSnapshot(
   if (isRunTerminalEvent(event)) {
     const activeRuns = prev.activeRuns?.filter((candidate) => candidate.id !== event.runId);
     const nextMemberRun = activeRuns?.find((candidate) => candidate.botId === event.botId);
+    const failure = runFailureError(event);
+    const endedRun = prev.run && prev.run.id === event.runId ? prev.run : null;
     return {
       ...prev,
       cursor: event.seq,
       messages: prev.messages.filter((message) => message.id !== progressMessageId(event)),
       members: updateMemberStatus(prev.members, event.botId, nextMemberRun?.status ?? "idle"),
-      run: prev.run?.id === event.runId ? (activeRuns?.[0] ?? null) : prev.run,
+      // A failed run stays in run (activeRuns already excludes it) so the transcript can say
+      // why it stopped, matching what threads.get returns on the next load.
+      run:
+        endedRun && failure
+          ? { ...endedRun, status: "failed", error: failure }
+          : endedRun
+            ? (activeRuns?.[0] ?? null)
+            : prev.run,
       activeRuns,
     };
   }

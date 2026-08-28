@@ -158,6 +158,16 @@ export function isRunTerminalEvent(event: { type: string }): boolean {
   );
 }
 
+/** Reason a run failed, or null when a terminal event carries no usable error to show. */
+export function runFailureError(event: {
+  type: string;
+  payload?: Record<string, unknown>;
+}): string | null {
+  if (event.type !== "run.failed") return null;
+  const error = event.payload?.error;
+  return typeof error === "string" && error.trim() ? error : null;
+}
+
 export type LiveMessageUpdate =
   | { type: "progress"; payload: Record<string, unknown> | undefined }
   | { type: "tool"; name: string };
