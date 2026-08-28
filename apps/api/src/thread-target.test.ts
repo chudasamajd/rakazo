@@ -321,6 +321,138 @@ describe("threadSnapshot", () => {
       }),
     );
   });
+
+  it("keeps a concurrent member failure in run while another member is still active", async () => {
+    const active = {
+      id: "run-active",
+      botId: "bot-a",
+      threadId: "thread-1",
+      taskId: "task-a",
+      status: "running",
+      trigger: "user",
+      modelProvider: null,
+      modelId: null,
+      error: null,
+      startedAt: new Date("2026-08-23T00:00:00.000Z"),
+      completedAt: null,
+      createdAt: new Date("2026-08-23T00:00:00.000Z"),
+    };
+    const failed = {
+      id: "run-failed",
+      botId: "bot-b",
+      threadId: "thread-1",
+      taskId: "task-b",
+      status: "failed",
+      trigger: "user",
+      modelProvider: null,
+      modelId: null,
+      error: "member exploded",
+      startedAt: new Date("2026-08-23T00:00:01.000Z"),
+      completedAt: new Date("2026-08-23T00:00:02.000Z"),
+      createdAt: new Date("2026-08-23T00:00:01.000Z"),
+    };
+    const findFirstRun = vi
+      .fn()
+      .mockImplementation(async (args: { where?: { status?: unknown } }) => {
+        const status = args.where?.status;
+        if (status === "failed") return failed;
+        if (status && typeof status === "object" && "in" in status) return failed;
+        return null;
+      });
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
+      message: { findMany: vi.fn().mockResolvedValue([]) },
+      event: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      run: { findMany: vi.fn().mockResolvedValue([active]), findFirst: findFirstRun },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+    } as unknown as PrismaClient;
+    const target = {
+      kind: "group",
+      groupId: "group-1",
+      groupName: "Group",
+      members: [],
+      threadId: "thread-1",
+    } as unknown as ThreadTarget;
+
+    const snapshot = await threadSnapshot({ prisma }, target);
+
+    expect(snapshot.run).toEqual(
+      expect.objectContaining({ id: "run-failed", status: "failed", error: "member exploded" }),
+    );
+    expect(snapshot.activeRuns).toEqual([
+      expect.objectContaining({ id: "run-active", status: "running" }),
+    ]);
+  });
+
+  it("does not revive an older failure while a newer group member is still running", async () => {
+    const active = {
+      id: "run-active",
+      botId: "bot-a",
+      threadId: "thread-1",
+      taskId: "task-a",
+      status: "running",
+      trigger: "user",
+      modelProvider: null,
+      modelId: null,
+      error: null,
+      startedAt: new Date("2026-08-23T01:00:00.000Z"),
+      completedAt: null,
+      createdAt: new Date("2026-08-23T01:00:00.000Z"),
+    };
+    const staleFailed = {
+      id: "run-old-failed",
+      botId: "bot-b",
+      threadId: "thread-1",
+      taskId: "task-b",
+      status: "failed",
+      trigger: "user",
+      modelProvider: null,
+      modelId: null,
+      error: "old failure",
+      startedAt: new Date("2026-08-22T00:00:00.000Z"),
+      completedAt: new Date("2026-08-22T00:00:01.000Z"),
+      createdAt: new Date("2026-08-22T00:00:00.000Z"),
+    };
+    const findFirstRun = vi
+      .fn()
+      .mockImplementation(async (args: { where?: { status?: unknown } }) => {
+        const status = args.where?.status;
+        if (status === "failed") return staleFailed;
+        if (status && typeof status === "object" && "in" in status) return staleFailed;
+        return null;
+      });
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
+      message: { findMany: vi.fn().mockResolvedValue([]) },
+      event: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      run: { findMany: vi.fn().mockResolvedValue([active]), findFirst: findFirstRun },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+    } as unknown as PrismaClient;
+    const target = {
+      kind: "group",
+      groupId: "group-1",
+      groupName: "Group",
+      members: [],
+      threadId: "thread-1",
+    } as unknown as ThreadTarget;
+
+    const snapshot = await threadSnapshot({ prisma }, target);
+
+    expect(snapshot.run).toEqual(expect.objectContaining({ id: "run-active", status: "running" }));
+    expect(snapshot.activeRuns).toEqual([
+      expect.objectContaining({ id: "run-active", status: "running" }),
+    ]);
+  });
 });
 
 describe("stopThreadRuns", () => {

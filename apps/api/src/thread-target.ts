@@ -319,7 +319,7 @@ export async function threadSnapshot(
 
   const core = await deps.prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM threads WHERE id = ${target.threadId} FOR SHARE`;
-    const [messagePage, last, activeRuns, terminalRun] = await Promise.all([
+    const [messagePage, last, activeRuns, terminalRun, latestFailed] = await Promise.all([
       loadMessagePage(tx, target.threadId, undefined, THREAD_MESSAGE_PAGE_SIZE),
       tx.event.findFirst({
         where: { threadId: target.threadId },
@@ -342,6 +342,11 @@ export async function threadSnapshot(
         },
         orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
       }),
+      // Concurrent member failure while siblings are still active (matches the live reducer).
+      tx.run.findFirst({
+        where: { threadId: target.threadId, status: "failed" },
+        orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+      }),
     ]);
     const liveEvents =
       activeRuns.length > 0
@@ -354,8 +359,22 @@ export async function threadSnapshot(
             orderBy: { seq: "asc" },
           })
         : [];
-    return { messagePage, last, activeRuns, terminalRun, liveEvents };
+    return { messagePage, last, activeRuns, terminalRun, latestFailed, liveEvents };
   });
+  const oldestActiveCreatedAt =
+    core.activeRuns.length === 0
+      ? null
+      : core.activeRuns.reduce(
+          (earliest, run) => (run.createdAt < earliest ? run.createdAt : earliest),
+          core.activeRuns[0].createdAt,
+        );
+  // A failure that ended after the oldest active sibling started is still "current", matching
+  // the live reducer's failed-in-run slot while activeRuns keeps the remaining members.
+  const failedAt = core.latestFailed?.completedAt ?? core.latestFailed?.createdAt ?? null;
+  const concurrentFailed =
+    oldestActiveCreatedAt && failedAt && failedAt >= oldestActiveCreatedAt
+      ? core.latestFailed
+      : null;
   return {
     groupId: target.groupId,
     groupName: target.groupName,
@@ -364,11 +383,13 @@ export async function threadSnapshot(
     cursor: core.last?.seq ?? -1,
     messages: messagesWithLiveEvents(core.messagePage.messages, core.liveEvents),
     olderCursor: core.messagePage.olderCursor,
-    run: core.activeRuns[0]
-      ? mapRun(core.activeRuns[0])
-      : core.terminalRun?.status === "failed"
-        ? mapRun(core.terminalRun)
-        : null,
+    run: concurrentFailed
+      ? mapRun(concurrentFailed)
+      : core.activeRuns[0]
+        ? mapRun(core.activeRuns[0])
+        : core.terminalRun?.status === "failed"
+          ? mapRun(core.terminalRun)
+          : null,
     activeRuns: core.activeRuns.map(mapRun),
   };
 }
