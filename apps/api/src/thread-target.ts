@@ -340,7 +340,11 @@ export async function threadSnapshot(
           threadId: target.threadId,
           status: { in: ["failed", "completed", "cancelled"] },
         },
-        orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+        orderBy: [
+          { completedAt: { sort: "desc", nulls: "last" } },
+          { createdAt: "desc" },
+          { id: "desc" },
+        ],
       }),
     ]);
     const liveEvents =
