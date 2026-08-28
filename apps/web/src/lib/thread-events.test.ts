@@ -591,6 +591,38 @@ describe("thread event reduction", () => {
     expect(threadRunError(next)).toBe("member exploded");
   });
 
+  it("keeps a group failure visible when another member starts before dismiss", () => {
+    const failed = {
+      ...threadRun("run-b", "bot-b"),
+      status: "failed" as const,
+      error: "member exploded",
+    };
+    const runA = threadRun("run-a", "bot-a");
+    const initial: ThreadSnapshot = {
+      ...snapshot([]),
+      groupId: "group-1",
+      run: failed,
+      activeRuns: [runA],
+    };
+
+    const next = reduceThreadSnapshot(
+      initial,
+      event({
+        type: "run.started",
+        seq: 14,
+        botId: "bot-c",
+        runId: "run-c",
+      }),
+    );
+
+    expect(next?.run).toMatchObject({ id: failed.id, status: "failed", error: "member exploded" });
+    expect(next?.activeRuns).toEqual([
+      runA,
+      expect.objectContaining({ id: "run-c", botId: "bot-c", status: "running" }),
+    ]);
+    expect(threadRunError(next)).toBe("member exploded");
+  });
+
   it("clears the run and reports no error when it completes or fails without a message", () => {
     const finishing = threadRun("run-a");
     const initial: ThreadSnapshot = { ...snapshot([]), run: finishing };

@@ -259,7 +259,9 @@ export function reduceThreadSnapshot(
       ...prev,
       cursor: event.seq,
       members: updateMemberStatus(prev.members, event.botId, "running"),
-      run,
+      // A group failure lives only in run; keep it until dismiss so a late member start
+      // cannot wipe the banner (activeRuns still tracks the new work).
+      run: prev.groupId && prev.run?.status === "failed" && prev.run.id !== run.id ? prev.run : run,
       activeRuns,
     };
   }
