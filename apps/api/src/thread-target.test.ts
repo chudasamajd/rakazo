@@ -351,14 +351,7 @@ describe("threadSnapshot", () => {
       completedAt: new Date("2026-08-23T00:00:02.000Z"),
       createdAt: new Date("2026-08-23T00:00:01.000Z"),
     };
-    const findFirstRun = vi
-      .fn()
-      .mockImplementation(async (args: { where?: { status?: unknown } }) => {
-        const status = args.where?.status;
-        if (status === "failed") return failed;
-        if (status && typeof status === "object" && "in" in status) return failed;
-        return null;
-      });
+    const findFirstRun = vi.fn().mockResolvedValue(failed);
     const tx = {
       $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
       message: { findMany: vi.fn().mockResolvedValue([]) },
@@ -389,9 +382,9 @@ describe("threadSnapshot", () => {
     ]);
   });
 
-  it("does not revive an older failure while a newer group member is still running", async () => {
-    const active = {
-      id: "run-active",
+  it("keeps a failure on refresh when another member starts after it", async () => {
+    const lateActive = {
+      id: "run-late",
       botId: "bot-a",
       threadId: "thread-1",
       taskId: "task-a",
@@ -400,12 +393,12 @@ describe("threadSnapshot", () => {
       modelProvider: null,
       modelId: null,
       error: null,
-      startedAt: new Date("2026-08-23T01:00:00.000Z"),
+      startedAt: new Date("2026-08-23T00:00:03.000Z"),
       completedAt: null,
-      createdAt: new Date("2026-08-23T01:00:00.000Z"),
+      createdAt: new Date("2026-08-23T00:00:03.000Z"),
     };
-    const staleFailed = {
-      id: "run-old-failed",
+    const failed = {
+      id: "run-failed",
       botId: "bot-b",
       threadId: "thread-1",
       taskId: "task-b",
@@ -413,19 +406,12 @@ describe("threadSnapshot", () => {
       trigger: "user",
       modelProvider: null,
       modelId: null,
-      error: "old failure",
-      startedAt: new Date("2026-08-22T00:00:00.000Z"),
-      completedAt: new Date("2026-08-22T00:00:01.000Z"),
-      createdAt: new Date("2026-08-22T00:00:00.000Z"),
+      error: "member exploded",
+      startedAt: new Date("2026-08-23T00:00:01.000Z"),
+      completedAt: new Date("2026-08-23T00:00:02.000Z"),
+      createdAt: new Date("2026-08-23T00:00:01.000Z"),
     };
-    const findFirstRun = vi
-      .fn()
-      .mockImplementation(async (args: { where?: { status?: unknown } }) => {
-        const status = args.where?.status;
-        if (status === "failed") return staleFailed;
-        if (status && typeof status === "object" && "in" in status) return staleFailed;
-        return null;
-      });
+    const findFirstRun = vi.fn().mockResolvedValue(failed);
     const tx = {
       $queryRaw: vi.fn().mockResolvedValue([{ id: "thread-1" }]),
       message: { findMany: vi.fn().mockResolvedValue([]) },
@@ -433,7 +419,7 @@ describe("threadSnapshot", () => {
         findFirst: vi.fn().mockResolvedValue(null),
         findMany: vi.fn().mockResolvedValue([]),
       },
-      run: { findMany: vi.fn().mockResolvedValue([active]), findFirst: findFirstRun },
+      run: { findMany: vi.fn().mockResolvedValue([lateActive]), findFirst: findFirstRun },
     };
     const prisma = {
       $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
@@ -448,9 +434,11 @@ describe("threadSnapshot", () => {
 
     const snapshot = await threadSnapshot({ prisma }, target);
 
-    expect(snapshot.run).toEqual(expect.objectContaining({ id: "run-active", status: "running" }));
+    expect(snapshot.run).toEqual(
+      expect.objectContaining({ id: "run-failed", status: "failed", error: "member exploded" }),
+    );
     expect(snapshot.activeRuns).toEqual([
-      expect.objectContaining({ id: "run-active", status: "running" }),
+      expect.objectContaining({ id: "run-late", status: "running" }),
     ]);
   });
 });
