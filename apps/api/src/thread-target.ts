@@ -12,6 +12,7 @@ import {
   isActive,
   projectMessages,
   resolveGroupTargetBotIds,
+  runFailureError,
 } from "@rakazo/core";
 import {
   appendEventInTransaction,
@@ -318,7 +319,7 @@ export async function threadSnapshot(
 
   const core = await deps.prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM threads WHERE id = ${target.threadId} FOR SHARE`;
-    const [messagePage, last, activeRuns, failedRun] = await Promise.all([
+    const [messagePage, last, activeRuns, terminalRun] = await Promise.all([
       loadMessagePage(tx, target.threadId, undefined, THREAD_MESSAGE_PAGE_SIZE),
       tx.event.findFirst({
         where: { threadId: target.threadId },
@@ -332,11 +333,14 @@ export async function threadSnapshot(
         },
         orderBy: { createdAt: "desc" },
       }),
-      // Matches the bot branch: a group whose last run failed still reports it, so a refresh
-      // does not wipe the error the client is showing.
+      // Prefer the latest terminal run by when it ended. Only a failed latest terminal is
+      // surfaced — a newer completed/cancelled run must not revive an older failure on refresh.
       tx.run.findFirst({
-        where: { threadId: target.threadId, status: "failed" },
-        orderBy: { createdAt: "desc" },
+        where: {
+          threadId: target.threadId,
+          status: { in: ["failed", "completed", "cancelled"] },
+        },
+        orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
       }),
     ]);
     const liveEvents =
@@ -350,7 +354,7 @@ export async function threadSnapshot(
             orderBy: { seq: "asc" },
           })
         : [];
-    return { messagePage, last, activeRuns, failedRun, liveEvents };
+    return { messagePage, last, activeRuns, terminalRun, liveEvents };
   });
   return {
     groupId: target.groupId,
@@ -362,8 +366,8 @@ export async function threadSnapshot(
     olderCursor: core.messagePage.olderCursor,
     run: core.activeRuns[0]
       ? mapRun(core.activeRuns[0])
-      : core.failedRun
-        ? mapRun(core.failedRun)
+      : core.terminalRun?.status === "failed"
+        ? mapRun(core.terminalRun)
         : null,
     activeRuns: core.activeRuns.map(mapRun),
   };
@@ -412,7 +416,11 @@ function mapRun(run: {
     routineId: run.routineId ?? null,
     modelProvider: run.modelProvider,
     modelId: run.modelId,
-    error: run.error,
+    // Same display clamp as live run.failed events so a huge stored error cannot bypass it.
+    error:
+      run.status === "failed"
+        ? runFailureError({ type: "run.failed", payload: { error: run.error } })
+        : run.error,
     startedAt: run.startedAt?.toISOString() ?? null,
     completedAt: run.completedAt?.toISOString() ?? null,
     createdAt: run.createdAt.toISOString(),
