@@ -207,7 +207,7 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
               </div>
             ) : null}
             {error ? (
-              <p role="alert" className="mt-3 w-full text-sm text-[#EF4444]">
+              <p role="alert" className="mt-3 w-full text-sm text-[#B91C1C]">
                 {error}
               </p>
             ) : null}
@@ -324,7 +324,7 @@ export function PasswordResetPage() {
               className="mt-4"
             />
             {error ? (
-              <p role="alert" className="mt-3 w-full text-sm text-[#EF4444]">
+              <p role="alert" className="mt-3 w-full text-sm text-[#B91C1C]">
                 {error}
               </p>
             ) : null}

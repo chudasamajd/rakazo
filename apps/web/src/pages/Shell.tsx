@@ -5170,7 +5170,7 @@ const MessageView = memo(function MessageView({
                   className="rounded-full px-[11px] py-1 text-[13px]"
                   style={{
                     background: failed
-                      ? "rgba(230,87,7,.14)"
+                      ? "rgba(239,68,68,.14)"
                       : running
                         ? "rgba(245,160,60,.14)"
                         : "rgba(48,162,75,.14)",
@@ -5209,7 +5209,7 @@ const MessageView = memo(function MessageView({
                 <span
                   className="rounded-full px-[11px] py-1 text-[13px]"
                   style={{
-                    background: removed ? "rgba(230,87,7,.14)" : "rgba(48,162,75,.14)",
+                    background: removed ? "rgba(239,68,68,.14)" : "rgba(48,162,75,.14)",
                     color: removed ? "#EF4444" : "#4ECB71",
                   }}
                 >
